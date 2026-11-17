@@ -30,7 +30,7 @@ export interface Lab {
   ownerName: string;
   memberIds: string[];
   schedule: LabSchedule;
-  googleSheetId?: string;
+  googleDocId?: string;
   lastSyncedAt?: number;
   createdAt: number;
 }

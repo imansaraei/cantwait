@@ -17,8 +17,7 @@ import {
   BellOff,
   Settings,
   ChevronDown,
-  FileSpreadsheet,
-  Download,
+  FileText,
   ExternalLink,
   Users,
   RefreshCw,
@@ -42,11 +41,11 @@ import {
   getLabIdeas,
   getLabUserVotes,
   addIdeaToLab,
-  syncSheetToLab,
+  syncDocToLab,
   recordLabVote,
   updateIdeaStatus,
 } from './labService';
-import { downloadBlankSheetTemplate } from './sheets';
+import { GOOGLE_DOC_MARKDOWN_TEMPLATE } from './docsParser';
 
 function parseInviteCodeFromUrl(): string | null {
   if (typeof window === 'undefined') return null;
@@ -87,9 +86,12 @@ export default function App() {
   const [settingsName, setSettingsName] = useState('');
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduleTime, setScheduleTime] = useState('09:00');
-  const [sheetUrlInput, setSheetUrlInput] = useState('');
-  const [isSyncingSheet, setIsSyncingSheet] = useState(false);
-  const [sheetError, setSheetError] = useState<string | null>(null);
+  const [docUrlInput, setDocUrlInput] = useState('');
+  const [manualMarkdown, setManualMarkdown] = useState('');
+  const [showManualPaste, setShowManualPaste] = useState(false);
+  const [copiedTemplate, setCopiedTemplate] = useState(false);
+  const [isSyncingDoc, setIsSyncingDoc] = useState(false);
+  const [docError, setDocError] = useState<string | null>(null);
 
   // Composer Modal
   const [isComposeOpen, setIsComposeOpen] = useState(false);
@@ -178,7 +180,11 @@ export default function App() {
     setSettingsName(activeLab.name);
     setScheduleEnabled(activeLab.schedule?.enabled ?? false);
     setScheduleTime(activeLab.schedule?.time || '09:00');
-    setSheetUrlInput(activeLab.googleSheetId || '');
+    setDocUrlInput(
+      activeLab.googleDocId && activeLab.googleDocId !== 'manual-doc'
+        ? `https://docs.google.com/document/d/${activeLab.googleDocId}/edit`
+        : ''
+    );
     setHistory([]);
 
     (async () => {
@@ -314,21 +320,25 @@ export default function App() {
     showToast('Idea dropped into your Lab');
   };
 
-  const handleSyncSheet = async () => {
-    if (!activeLab || !sheetUrlInput.trim()) return;
-    setIsSyncingSheet(true);
-    setSheetError(null);
+  const handleSyncDoc = async () => {
+    if (!activeLab || (!docUrlInput.trim() && !manualMarkdown.trim())) return;
+    setIsSyncingDoc(true);
+    setDocError(null);
     try {
-      const res = await syncSheetToLab(activeLab.id, sheetUrlInput.trim());
+      const res = await syncDocToLab(
+        activeLab.id,
+        docUrlInput.trim(),
+        manualMarkdown.trim() || undefined
+      );
       setIdeas(res.ideas);
       setActiveLab((prev) =>
-        prev ? { ...prev, googleSheetId: res.sheetId, lastSyncedAt: Date.now() } : prev
+        prev ? { ...prev, googleDocId: res.docId, lastSyncedAt: Date.now() } : prev
       );
-      showToast(`Synced ${res.count} ideas from Google Sheet`);
+      showToast(`Synced ${res.count} ideas from Google Doc`);
     } catch (err: any) {
-      setSheetError(err?.message || 'Failed to sync Google Sheet.');
+      setDocError(err?.message || 'Failed to sync Google Doc.');
     } finally {
-      setIsSyncingSheet(false);
+      setIsSyncingDoc(false);
     }
   };
 
@@ -581,12 +591,12 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  setSheetError(null);
+                  setDocError(null);
                   setIsSettingsOpen(true);
                 }}
-                aria-label="Lab Settings & Google Sheet Sync"
+                aria-label="Lab Settings & Google Doc Sync"
                 className="p-2 rounded-full bg-paper border border-stone-border text-stone-sub hover:text-stone-ink transition-all active:scale-95"
-                title="Lab Settings & Google Sheet Sync"
+                title="Lab Settings & Google Doc Sync"
               >
                 <Settings className="w-4 h-4" />
               </button>
@@ -649,7 +659,7 @@ export default function App() {
                 <p className="text-sm text-stone-sub leading-relaxed">
                   {potIdeas.length === 0
                     ? isOwner
-                      ? 'Drop your first idea or sync a Google Sheet in Lab Settings.'
+                      ? 'Drop your first idea or sync a Google Doc in Lab Settings.'
                       : 'Check back later or turn on the daily reminder bell above.'
                     : "You've voted on every idea in this Lab. Check the Popularity Pulse to see what's winning."}
                 </p>
@@ -668,7 +678,7 @@ export default function App() {
                         onClick={() => setIsSettingsOpen(true)}
                         className="w-full py-2.5 rounded-xl bg-stone-well hover:bg-stone-border/60 text-stone-ink font-semibold text-xs transition-all active:scale-95"
                       >
-                        Import from Google Sheet
+                        Import from Google Doc
                       </button>
                     </>
                   ) : (
@@ -1150,53 +1160,74 @@ export default function App() {
               </button>
             </form>
 
-            {/* Google Sheet Sync Section */}
+            {/* Google Doc Sync Section (IdeaSwipe Schema) */}
             <div className="pt-4 border-t border-stone-border space-y-3">
               <div className="flex items-center justify-between">
                 <h4 className="text-sm font-bold text-stone-ink flex items-center gap-1.5">
-                  <FileSpreadsheet className="w-4 h-4 text-coral" />
-                  <span>Sync from Google Sheet</span>
+                  <FileText className="w-4 h-4 text-coral" />
+                  <span>Sync from Google Doc</span>
                 </h4>
                 <button
                   type="button"
-                  onClick={downloadBlankSheetTemplate}
+                  onClick={() => {
+                    navigator.clipboard?.writeText(GOOGLE_DOC_MARKDOWN_TEMPLATE).catch(() => {});
+                    setCopiedTemplate(true);
+                    setTimeout(() => setCopiedTemplate(false), 2000);
+                  }}
                   className="inline-flex items-center gap-1 text-xs font-semibold text-coral hover:underline"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Blank Template (.csv)</span>
+                  {copiedTemplate ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedTemplate ? 'Copied Template!' : 'Copy Template'}</span>
                 </button>
               </div>
 
               <p className="text-xs text-stone-sub leading-relaxed">
-                Share a 5-column Google Sheet (<strong>no</strong>, <strong>One-liner Description</strong>,{' '}
-                <strong>Full Description</strong>, <strong>Further Read/Listen</strong>, <strong>Pot</strong>) with{' '}
-                <em>&ldquo;Anyone with the link&rdquo;</em> access.
+                Paste a Google Doc URL shared as <em>&ldquo;Anyone with the link can view&rdquo;</em> using{' '}
+                <code className="font-mono-tab text-stone-ink">### ★ I-001 Title</code> headings.
               </p>
 
-              {sheetError && (
+              {docError && (
                 <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700">
-                  {sheetError}
+                  {docError}
                 </div>
               )}
 
               <div className="flex gap-2">
                 <input
                   type="text"
-                  value={sheetUrlInput}
-                  onChange={(e) => setSheetUrlInput(e.target.value)}
-                  placeholder="https://docs.google.com/spreadsheets/d/..."
+                  value={docUrlInput}
+                  onChange={(e) => setDocUrlInput(e.target.value)}
+                  placeholder="https://docs.google.com/document/d/..."
                   className="flex-1 px-3 py-2 rounded-xl bg-cream border border-stone-border text-xs focus:border-coral focus:outline-none"
                 />
                 <button
                   type="button"
-                  disabled={isSyncingSheet || !sheetUrlInput.trim()}
-                  onClick={handleSyncSheet}
+                  disabled={isSyncingDoc || (!docUrlInput.trim() && !manualMarkdown.trim())}
+                  onClick={handleSyncDoc}
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-coral hover:bg-coral-hover disabled:opacity-50 text-white text-xs font-bold active:scale-95"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingSheet ? 'animate-spin' : ''}`} />
-                  <span>{isSyncingSheet ? 'Syncing...' : 'Sync'}</span>
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingDoc ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingDoc ? 'Syncing...' : 'Sync Doc'}</span>
                 </button>
               </div>
+
+              <button
+                type="button"
+                onClick={() => setShowManualPaste((prev) => !prev)}
+                className="text-xs font-medium text-stone-sub hover:text-stone-ink underline"
+              >
+                {showManualPaste ? 'Hide direct markdown paste' : 'Or paste markdown directly'}
+              </button>
+
+              {showManualPaste && (
+                <textarea
+                  rows={4}
+                  value={manualMarkdown}
+                  onChange={(e) => setManualMarkdown(e.target.value)}
+                  placeholder={GOOGLE_DOC_MARKDOWN_TEMPLATE}
+                  className="w-full px-3 py-2 rounded-xl bg-cream border border-stone-border font-mono-tab text-xs focus:border-coral focus:outline-none"
+                />
+              )}
             </div>
           </div>
         </div>
