@@ -13,8 +13,17 @@ import {
   LogIn,
   LogOut,
   Mail,
+  Bell,
+  BellOff,
+  Settings,
+  ChevronDown,
+  FileSpreadsheet,
+  Download,
+  ExternalLink,
+  Users,
+  RefreshCw,
 } from 'lucide-react';
-import { IdeaItem, IdeaType, IdeaStatus } from './types';
+import { IdeaItem, IdeaType, IdeaStatus, Lab } from './types';
 import {
   onAuthChange,
   signInWithGoogle,
@@ -23,83 +32,33 @@ import {
   signOut,
   type AuthUser,
 } from './auth';
+import {
+  getUserLabs,
+  createLab,
+  joinLabByCode,
+  updateLabSettings,
+  setLabNotificationPref,
+  getLocalNotifyLabs,
+  getLabIdeas,
+  getLabUserVotes,
+  addIdeaToLab,
+  syncSheetToLab,
+  recordLabVote,
+  updateIdeaStatus,
+} from './labService';
+import { downloadBlankSheetTemplate } from './sheets';
 
-const INITIAL_IDEAS: IdeaItem[] = [
-  {
-    id: 'cw-1',
-    type: 'Content',
-    format: 'Video',
-    title: 'Why I ditched 5 productivity apps for a single plain-text file',
-    hook: 'A 10-minute breakdown of my minimal workflow, zero-notification setup, and how it doubled my shipping speed.',
-    cantWaitCount: 14,
-    passCount: 2,
-    status: 'queued',
-    createdAt: Date.now() - 7200000,
-  },
-  {
-    id: 'cw-2',
-    type: 'Product',
-    format: 'Micro-App',
-    title: 'AI Voice Memo → Structured GitHub Issues',
-    hook: 'Speak a 30-second bug report while walking; it auto-formats repro steps, labels, and opens a clean issue.',
-    cantWaitCount: 11,
-    passCount: 1,
-    status: 'building',
-    createdAt: Date.now() - 18000000,
-  },
-  {
-    id: 'cw-3',
-    type: 'Content',
-    format: 'Essay',
-    title: 'The Quiet Death of Feature-Bloated SaaS',
-    hook: 'Why single-purpose micro-tools are winning back users tired of $49/mo all-in-one workspaces.',
-    cantWaitCount: 9,
-    passCount: 4,
-    status: 'queued',
-    createdAt: Date.now() - 36000000,
-  },
-  {
-    id: 'cw-4',
-    type: 'Product',
-    format: 'Feature',
-    title: 'Focus-Group Changelog Widget',
-    hook: 'Embeddable 2-button swipe widget where beta users vote on your next release before you write a line of code.',
-    cantWaitCount: 16,
-    passCount: 3,
-    status: 'shipped',
-    createdAt: Date.now() - 86400000,
-  },
-];
-
-const STORAGE_KEY_IDEAS = 'cantwait_ideas_v1';
-const STORAGE_KEY_VOTED = 'cantwait_voted_v1';
+function parseInviteCodeFromUrl(): string | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code') || params.get('lab');
+  return code ? code.trim().toUpperCase() : null;
+}
 
 export default function App() {
-  const [ideas, setIdeas] = useState<IdeaItem[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_IDEAS);
-      return saved ? JSON.parse(saved) : INITIAL_IDEAS;
-    } catch {
-      return INITIAL_IDEAS;
-    }
-  });
-
-  const [votedIds, setVotedIds] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_VOTED);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-
-  const [history, setHistory] = useState<{ id: string; vote: 'cantwait' | 'pass' }[]>([]);
-  const [tab, setTab] = useState<'feed' | 'pulse'>('feed');
-  const [copied, setCopied] = useState(false);
-
   // Auth State
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
   const [authEmail, setAuthEmail] = useState('');
   const [authCode, setAuthCode] = useState('');
   const [sentCodePreview, setSentCodePreview] = useState<string | null>(null);
@@ -107,9 +66,30 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
 
-  useEffect(() => {
-    return onAuthChange((u) => setUser(u));
-  }, []);
+  // Labs & Ideas State
+  const [labs, setLabs] = useState<Lab[]>([]);
+  const [activeLab, setActiveLab] = useState<Lab | null>(null);
+  const [ideas, setIdeas] = useState<IdeaItem[]>([]);
+  const [votedIds, setVotedIds] = useState<string[]>([]);
+  const [notifyLabIds, setNotifyLabIds] = useState<string[]>([]);
+  const [history, setHistory] = useState<{ id: string; vote: 'cantwait' | 'pass' }[]>([]);
+  const [tab, setTab] = useState<'feed' | 'pulse'>('feed');
+  const [copied, setCopied] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  // Modals
+  const [isSwitcherOpen, setIsSwitcherOpen] = useState(false);
+  const [newLabName, setNewLabName] = useState('');
+  const [joinCodeInput, setJoinCodeInput] = useState('');
+  const [labActionError, setLabActionError] = useState<string | null>(null);
+
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsName, setSettingsName] = useState('');
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduleTime, setScheduleTime] = useState('09:00');
+  const [sheetUrlInput, setSheetUrlInput] = useState('');
+  const [isSyncingSheet, setIsSyncingSheet] = useState(false);
+  const [sheetError, setSheetError] = useState<string | null>(null);
 
   // Composer Modal
   const [isComposeOpen, setIsComposeOpen] = useState(false);
@@ -117,6 +97,7 @@ export default function App() {
   const [newFormat, setNewFormat] = useState('Video');
   const [newTitle, setNewTitle] = useState('');
   const [newHook, setNewHook] = useState('');
+  const [newFurtherRead, setNewFurtherRead] = useState('');
 
   // Drag & exit animation physics state
   const [dx, setDx] = useState(0);
@@ -124,21 +105,104 @@ export default function App() {
   const [isExiting, setIsExiting] = useState<'cantwait' | 'pass' | null>(null);
   const startXRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_IDEAS, JSON.stringify(ideas));
-  }, [ideas]);
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3200);
+  };
 
+  // Listen to Auth
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_VOTED, JSON.stringify(votedIds));
-  }, [votedIds]);
+    const unsub = onAuthChange((u) => {
+      setUser(u);
+      setAuthReady(true);
+    });
+    return () => unsub();
+  }, []);
 
-  const unvotedIdeas = ideas.filter((i) => !votedIds.includes(i.id));
+  // Load Labs when user signs in
+  useEffect(() => {
+    if (!user) {
+      setLabs([]);
+      setActiveLab(null);
+      setIdeas([]);
+      setVotedIds([]);
+      return;
+    }
+
+    setNotifyLabIds(getLocalNotifyLabs(user.uid));
+
+    (async () => {
+      const displayName = user.displayName || user.email?.split('@')[0] || 'Creator';
+      let loaded = await getUserLabs(user.uid, displayName);
+
+      const inviteCode = parseInviteCodeFromUrl();
+      if (inviteCode) {
+        const existing = loaded.find((l) => l.code.toUpperCase() === inviteCode);
+        if (existing) {
+          setLabs(loaded);
+          setActiveLab(existing);
+          return;
+        }
+        try {
+          const joined = await joinLabByCode(user.uid, inviteCode);
+          loaded = [joined, ...loaded.filter((l) => l.id !== joined.id)];
+          setLabs(loaded);
+          setActiveLab(joined);
+          showToast(`Joined ${joined.name}`);
+          return;
+        } catch {
+          // ignore invalid code
+        }
+      }
+
+      setLabs(loaded);
+      setActiveLab(loaded[0] || null);
+    })();
+  }, [user]);
+
+  // Load Ideas & Votes when activeLab changes
+  useEffect(() => {
+    if (!user || !activeLab) return;
+
+    // Sync URL ?code=
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get('code') !== activeLab.code) {
+        url.searchParams.set('code', activeLab.code);
+        window.history.replaceState(null, '', url.toString());
+      }
+    } catch {
+      // ignore
+    }
+
+    setSettingsName(activeLab.name);
+    setScheduleEnabled(activeLab.schedule?.enabled ?? false);
+    setScheduleTime(activeLab.schedule?.time || '09:00');
+    setSheetUrlInput(activeLab.googleSheetId || '');
+    setHistory([]);
+
+    (async () => {
+      const [loadedIdeas, loadedVotes] = await Promise.all([
+        getLabIdeas(activeLab.id),
+        getLabUserVotes(activeLab.id, user.uid),
+      ]);
+      setIdeas(loadedIdeas);
+      setVotedIds(loadedVotes);
+    })();
+  }, [user, activeLab?.id]);
+
+  const isOwner = Boolean(user && activeLab && activeLab.ownerId === user.uid);
+  const isNotifying = Boolean(activeLab && notifyLabIds.includes(activeLab.id));
+
+  // Only show ideas in the pot that the user hasn't voted on
+  const potIdeas = ideas.filter((i) => i.inPot !== false);
+  const unvotedIdeas = potIdeas.filter((i) => !votedIds.includes(i.id));
   const topIdea = unvotedIdeas[0];
   const nextIdea = unvotedIdeas[1];
 
   const handleVote = useCallback(
     (vote: 'cantwait' | 'pass') => {
-      if (!topIdea || isExiting) return;
+      if (!topIdea || !user || !activeLab || isExiting) return;
       setIsDragging(false);
       setIsExiting(vote);
       setDx(vote === 'cantwait' ? 650 : -650);
@@ -159,9 +223,10 @@ export default function App() {
         setHistory((prev) => [...prev, { id: topIdea.id, vote }]);
         setDx(0);
         setIsExiting(null);
+        recordLabVote(activeLab.id, user.uid, topIdea.id, vote).catch(console.warn);
       }, 220);
     },
-    [topIdea, isExiting]
+    [topIdea, user, activeLab, isExiting]
   );
 
   const handleUndo = useCallback(() => {
@@ -185,7 +250,7 @@ export default function App() {
   // Keyboard shortcuts
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (isComposeOpen || tab !== 'feed') return;
+      if (!user || isComposeOpen || isSwitcherOpen || isSettingsOpen || tab !== 'feed') return;
       const target = e.target as HTMLElement;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
 
@@ -202,44 +267,95 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isComposeOpen, tab, handleVote, handleUndo]);
+  }, [user, isComposeOpen, isSwitcherOpen, isSettingsOpen, tab, handleVote, handleUndo]);
 
   const handleCopyInvite = () => {
-    navigator.clipboard?.writeText(window.location.href).catch(() => {});
+    if (!activeLab) return;
+    const inviteUrl = `${window.location.origin}/?code=${activeLab.code}`;
+    navigator.clipboard?.writeText(inviteUrl).catch(() => {});
     setCopied(true);
+    showToast(`Copied invite link for ${activeLab.code}`);
     setTimeout(() => setCopied(false), 1800);
   };
 
-  const handleCreateIdea = (e: React.FormEvent) => {
+  const handleToggleNotify = async () => {
+    if (!user || !activeLab) return;
+    try {
+      const next = !isNotifying;
+      await setLabNotificationPref(user.uid, activeLab.id, next);
+      setNotifyLabIds(getLocalNotifyLabs(user.uid));
+      showToast(
+        next
+          ? `Daily reminders enabled (${activeLab.schedule?.time || '09:00'})`
+          : 'Daily reminders paused for this lab'
+      );
+    } catch (err: any) {
+      showToast(err?.message || 'Could not update notification settings');
+    }
+  };
+
+  const handleCreateIdea = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTitle.trim() || !newHook.trim()) return;
-    const created: IdeaItem = {
-      id: `cw-${Date.now()}`,
+    if (!activeLab || !newTitle.trim() || !newHook.trim()) return;
+    const created = await addIdeaToLab(activeLab.id, {
       type: newType,
       format: newFormat.trim() || (newType === 'Content' ? 'Video' : 'Feature'),
       title: newTitle.trim(),
       hook: newHook.trim(),
-      cantWaitCount: 0,
-      passCount: 0,
-      status: 'queued',
-      createdAt: Date.now(),
-    };
+      furtherRead: newFurtherRead.trim() || undefined,
+      inPot: true,
+    });
     setIdeas((prev) => [created, ...prev]);
     setNewTitle('');
     setNewHook('');
+    setNewFurtherRead('');
     setIsComposeOpen(false);
     setTab('feed');
+    showToast('Idea dropped into your Lab');
   };
 
-  const cycleStatus = (id: string) => {
+  const handleSyncSheet = async () => {
+    if (!activeLab || !sheetUrlInput.trim()) return;
+    setIsSyncingSheet(true);
+    setSheetError(null);
+    try {
+      const res = await syncSheetToLab(activeLab.id, sheetUrlInput.trim());
+      setIdeas(res.ideas);
+      setActiveLab((prev) =>
+        prev ? { ...prev, googleSheetId: res.sheetId, lastSyncedAt: Date.now() } : prev
+      );
+      showToast(`Synced ${res.count} ideas from Google Sheet`);
+    } catch (err: any) {
+      setSheetError(err?.message || 'Failed to sync Google Sheet.');
+    } finally {
+      setIsSyncingSheet(false);
+    }
+  };
+
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeLab) return;
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const updates = {
+      name: settingsName.trim() || activeLab.name,
+      schedule: { enabled: scheduleEnabled, time: scheduleTime, timezone: tz },
+    };
+    await updateLabSettings(activeLab.id, updates);
+    const updated = { ...activeLab, ...updates };
+    setActiveLab(updated);
+    setLabs((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
+    setIsSettingsOpen(false);
+    showToast('Lab settings saved');
+  };
+
+  const cycleStatus = async (id: string) => {
+    if (!isOwner || !activeLab) return;
     const order: IdeaStatus[] = ['queued', 'building', 'shipped'];
-    setIdeas((prev) =>
-      prev.map((item) => {
-        if (item.id !== id) return item;
-        const next = order[(order.indexOf(item.status) + 1) % order.length];
-        return { ...item, status: next };
-      })
-    );
+    const target = ideas.find((i) => i.id === id);
+    if (!target) return;
+    const next = order[(order.indexOf(target.status) + 1) % order.length];
+    setIdeas((prev) => prev.map((item) => (item.id === id ? { ...item, status: next } : item)));
+    await updateIdeaStatus(activeLab.id, id, next);
   };
 
   const sortedPulse = [...ideas].sort((a, b) => {
@@ -253,66 +369,248 @@ export default function App() {
 
   const dragProgress = Math.min(1, Math.abs(dx) / 110);
 
+  // AUTH GATE: Sign-in required
+  if (authReady && !user) {
+    const invitedCode = parseInviteCodeFromUrl();
+    return (
+      <div className="min-h-screen bg-cream text-stone-ink flex flex-col items-center justify-center p-4">
+        <div className="w-full max-w-sm bg-paper rounded-3xl border border-stone-border shadow-[0_16px_40px_-10px_rgba(0,0,0,0.08)] p-7 space-y-6">
+          <div className="text-center space-y-2">
+            <div className="w-11 h-11 mx-auto rounded-2xl bg-coral text-white flex items-center justify-center font-extrabold text-lg shadow-sm">
+              !
+            </div>
+            <h1 className="text-2xl font-bold tracking-tight">Can&apos;t Wait</h1>
+            <p className="text-xs text-stone-sub leading-relaxed">
+              {invitedCode
+                ? `Sign in to join Focus Group "${invitedCode}" and swipe on ideas.`
+                : 'Sign in to create your own Focus Group Lab or join a creator’s group.'}
+            </p>
+          </div>
+
+          {authError && (
+            <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700">
+              {authError}
+            </div>
+          )}
+
+          <button
+            type="button"
+            disabled={authLoading}
+            onClick={async () => {
+              setAuthLoading(true);
+              setAuthError(null);
+              try {
+                await signInWithGoogle();
+              } catch (err: any) {
+                setAuthError(err?.message || 'Google sign-in failed.');
+              } finally {
+                setAuthLoading(false);
+              }
+            }}
+            className="w-full py-3 rounded-xl bg-stone-ink hover:bg-stone-ink/90 text-white font-semibold text-sm flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
+          >
+            <LogIn className="w-4 h-4" />
+            <span>Continue with Google</span>
+          </button>
+
+          <div className="relative flex items-center justify-center">
+            <div className="border-t border-stone-border w-full" />
+            <span className="bg-paper px-3 text-[11px] uppercase tracking-wider text-stone-muted">or</span>
+            <div className="border-t border-stone-border w-full" />
+          </div>
+
+          {authStep === 'email' ? (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setAuthLoading(true);
+                setAuthError(null);
+                try {
+                  const code = await requestEmailCode(authEmail);
+                  setSentCodePreview(code);
+                  setAuthStep('code');
+                } catch (err: any) {
+                  setAuthError(err?.message || 'Could not send code.');
+                } finally {
+                  setAuthLoading(false);
+                }
+              }}
+              className="space-y-3"
+            >
+              <div>
+                <label className="block text-xs font-semibold text-stone-sub mb-1">Email address</label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 text-stone-muted absolute left-3.5 top-3" />
+                  <input
+                    type="email"
+                    required
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-cream border border-stone-border text-sm focus:border-coral focus:outline-none"
+                  />
+                </div>
+              </div>
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full py-2.5 rounded-xl bg-coral hover:bg-coral-hover text-white font-bold text-sm transition-all active:scale-95 disabled:opacity-50"
+              >
+                Send 6-Digit Code
+              </button>
+            </form>
+          ) : (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setAuthLoading(true);
+                setAuthError(null);
+                try {
+                  await verifyEmailCode(authEmail, authCode);
+                } catch (err: any) {
+                  setAuthError(err?.message || 'Invalid code.');
+                } finally {
+                  setAuthLoading(false);
+                }
+              }}
+              className="space-y-3"
+            >
+              {sentCodePreview && (
+                <div className="p-2.5 rounded-xl bg-coral-tint border border-coral/20 text-xs text-coral font-mono-tab text-center">
+                  Verification Code: <strong>{sentCodePreview}</strong>
+                </div>
+              )}
+              <div>
+                <label className="block text-xs font-semibold text-stone-sub mb-1">
+                  Enter 6-digit code sent to {authEmail}
+                </label>
+                <input
+                  type="text"
+                  required
+                  maxLength={6}
+                  value={authCode}
+                  onChange={(e) => setAuthCode(e.target.value)}
+                  placeholder="123456"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-cream border border-stone-border text-center font-mono-tab text-lg tracking-widest focus:border-coral focus:outline-none"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full py-2.5 rounded-xl bg-coral hover:bg-coral-hover text-white font-bold text-sm transition-all active:scale-95 disabled:opacity-50"
+              >
+                Verify & Sign In
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-cream text-stone-ink flex flex-col justify-between p-4 sm:p-6">
-      {/* Top Editorial Header */}
-      <header className="w-full max-w-3xl mx-auto flex items-center justify-between border-b border-stone-border pb-4 gap-3">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-coral text-white flex items-center justify-center font-extrabold text-sm shadow-sm">
+      {/* Toast */}
+      {toast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-stone-ink text-cream text-xs font-semibold shadow-lg">
+          {toast}
+        </div>
+      )}
+
+      {/* Top Luma-Style Header */}
+      <header className="w-full max-w-3xl mx-auto flex items-center justify-between border-b border-stone-border pb-4 gap-2">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-xl bg-coral text-white flex items-center justify-center font-extrabold text-sm shadow-sm flex-shrink-0">
             !
           </div>
-          <div>
-            <h1 className="font-bold tracking-tight text-lg leading-none">Can't Wait</h1>
-            <span className="text-[11px] font-mono-tab text-stone-sub">Iman's Focus Group</span>
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setLabActionError(null);
+              setIsSwitcherOpen(true);
+            }}
+            className="text-left group min-w-0"
+          >
+            <div className="flex items-center gap-1 font-bold tracking-tight text-base sm:text-lg leading-none truncate">
+              <span className="truncate">{activeLab?.name || "Can't Wait"}</span>
+              <ChevronDown className="w-4 h-4 text-stone-sub group-hover:text-stone-ink flex-shrink-0" />
+            </div>
+            <span className="text-[11px] font-mono-tab text-stone-sub">
+              {isOwner ? 'Owner' : `by ${activeLab?.ownerName || 'Creator'}`}
+            </span>
+          </button>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleCopyInvite}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-paper border border-stone-border hover:border-stone-muted text-xs font-mono-tab text-stone-sub transition-all active:scale-95"
-          >
-            <span>LAB24</span>
-            {copied ? <Check className="w-3.5 h-3.5 text-coral" /> : <Copy className="w-3.5 h-3.5" />}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsComposeOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-stone-ink hover:bg-stone-ink/90 text-cream text-xs font-semibold transition-all active:scale-95 shadow-sm"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Drop Idea</span>
-          </button>
-
-          {user ? (
-            <div className="inline-flex items-center gap-1.5 pl-3 pr-1.5 py-1 rounded-full bg-paper border border-stone-border text-xs">
-              <span className="font-medium text-stone-ink max-w-[90px] truncate">
-                {user.displayName || user.email?.split('@')[0]}
-              </span>
-              <button
-                type="button"
-                onClick={() => signOut()}
-                aria-label="Sign out"
-                className="p-1 rounded-full hover:bg-stone-well text-stone-sub hover:text-stone-ink transition-colors"
-                title="Sign out"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ) : (
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+          {activeLab && (
             <button
               type="button"
-              onClick={() => {
-                setAuthError(null);
-                setAuthStep('email');
-                setIsAuthOpen(true);
-              }}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-paper border border-stone-border hover:border-stone-muted text-xs font-semibold text-stone-ink transition-all active:scale-95"
+              onClick={handleCopyInvite}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-paper border border-stone-border hover:border-stone-muted text-xs font-mono-tab text-stone-sub transition-all active:scale-95"
+              title="Copy invite link"
             >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>Sign In</span>
+              <span>{activeLab.code}</span>
+              {copied ? <Check className="w-3.5 h-3.5 text-coral" /> : <Copy className="w-3.5 h-3.5" />}
+            </button>
+          )}
+
+          {/* Daily Reminder Bell Toggle */}
+          {activeLab && (
+            <button
+              type="button"
+              onClick={handleToggleNotify}
+              aria-label="Toggle daily reminders"
+              className={`p-2 rounded-full border transition-all active:scale-95 ${
+                isNotifying
+                  ? 'bg-coral-tint border-coral/30 text-coral'
+                  : 'bg-paper border-stone-border text-stone-sub hover:text-stone-ink'
+              }`}
+              title={
+                isNotifying
+                  ? `Daily reminders ON (${activeLab.schedule?.time || '09:00'})`
+                  : 'Enable daily idea reminders'
+              }
+            >
+              {isNotifying ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
+            </button>
+          )}
+
+          {/* Owner Controls: Settings/Sheet Sync + Drop Idea */}
+          {isOwner && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setSheetError(null);
+                  setIsSettingsOpen(true);
+                }}
+                aria-label="Lab Settings & Google Sheet Sync"
+                className="p-2 rounded-full bg-paper border border-stone-border text-stone-sub hover:text-stone-ink transition-all active:scale-95"
+                title="Lab Settings & Google Sheet Sync"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsComposeOpen(true)}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-stone-ink hover:bg-stone-ink/90 text-cream text-xs font-semibold transition-all active:scale-95 shadow-sm"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Drop Idea</span>
+              </button>
+            </>
+          )}
+
+          {user && (
+            <button
+              type="button"
+              onClick={() => signOut()}
+              aria-label="Sign out"
+              className="p-2 rounded-full bg-paper border border-stone-border text-stone-sub hover:text-stone-ink transition-colors"
+              title={`Signed in as ${user.displayName || user.email} — Sign out`}
+            >
+              <LogOut className="w-4 h-4" />
             </button>
           )}
         </div>
@@ -345,28 +643,43 @@ export default function App() {
                 <div className="w-12 h-12 mx-auto rounded-2xl bg-coral-tint text-coral flex items-center justify-center">
                   <Sparkles className="w-6 h-6" />
                 </div>
-                <h2 className="font-serif text-3xl text-stone-ink">You're all caught up!</h2>
+                <h2 className="text-2xl font-bold text-stone-ink">
+                  {potIdeas.length === 0 ? 'No ideas in this Lab yet' : "You're all caught up!"}
+                </h2>
                 <p className="text-sm text-stone-sub leading-relaxed">
-                  You've voted on every idea in this focus group. Check the Popularity Pulse to see what's winning.
+                  {potIdeas.length === 0
+                    ? isOwner
+                      ? 'Drop your first idea or sync a Google Sheet in Lab Settings.'
+                      : 'Check back later or turn on the daily reminder bell above.'
+                    : "You've voted on every idea in this Lab. Check the Popularity Pulse to see what's winning."}
                 </p>
                 <div className="pt-2 flex flex-col gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setTab('pulse')}
-                    className="w-full py-3 rounded-xl bg-coral hover:bg-coral-hover text-white font-bold text-sm transition-all active:scale-95 shadow-sm"
-                  >
-                    View Popularity Pulse
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setVotedIds([]);
-                      setHistory([]);
-                    }}
-                    className="w-full py-2.5 rounded-xl bg-stone-well hover:bg-stone-border/60 text-stone-sub font-semibold text-xs transition-all active:scale-95"
-                  >
-                    Replay All Ideas
-                  </button>
+                  {potIdeas.length === 0 && isOwner ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setIsComposeOpen(true)}
+                        className="w-full py-3 rounded-xl bg-coral hover:bg-coral-hover text-white font-bold text-sm transition-all active:scale-95 shadow-sm"
+                      >
+                        Drop First Idea
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsSettingsOpen(true)}
+                        className="w-full py-2.5 rounded-xl bg-stone-well hover:bg-stone-border/60 text-stone-ink font-semibold text-xs transition-all active:scale-95"
+                      >
+                        Import from Google Sheet
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setTab('pulse')}
+                      className="w-full py-3 rounded-xl bg-coral hover:bg-coral-hover text-white font-bold text-sm transition-all active:scale-95 shadow-sm"
+                    >
+                      View Popularity Pulse
+                    </button>
+                  )}
                 </div>
               </div>
             ) : (
@@ -383,9 +696,9 @@ export default function App() {
                       }}
                     >
                       <span className="text-[11px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-coral-tint text-coral">
-                        {nextIdea.type} · {nextIdea.format}
+                        {nextIdea.no ? `#${nextIdea.no}` : `${nextIdea.type} · ${nextIdea.format}`}
                       </span>
-                      <h2 className="font-serif text-3xl leading-tight mt-4 text-stone-ink line-clamp-2">
+                      <h2 className="text-2xl font-bold leading-tight mt-4 text-stone-ink line-clamp-2">
                         {nextIdea.title}
                       </h2>
                     </div>
@@ -460,20 +773,33 @@ export default function App() {
 
                     <div className="flex items-center justify-between mb-4">
                       <span className="text-[11px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-coral-tint text-coral">
-                        {topIdea.type} · {topIdea.format}
+                        {topIdea.no ? `Idea #${topIdea.no}` : `${topIdea.type} · ${topIdea.format}`}
                       </span>
                       <span className="text-xs font-mono-tab text-stone-muted">
                         {topIdea.cantWaitCount} excited
                       </span>
                     </div>
 
-                    <h2 className="font-serif text-3xl sm:text-4xl leading-[1.12] text-stone-ink mb-3">
+                    <h2 className="text-2xl sm:text-3xl font-bold leading-[1.15] text-stone-ink mb-3">
                       {topIdea.title}
                     </h2>
 
-                    <p className="text-sm text-stone-sub leading-relaxed mb-6">
+                    <p className="text-sm text-stone-sub leading-relaxed mb-4">
                       {topIdea.hook}
                     </p>
+
+                    {topIdea.furtherRead && (
+                      <a
+                        href={topIdea.furtherRead.startsWith('http') ? topIdea.furtherRead : `https://${topIdea.furtherRead}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-1.5 text-xs font-semibold text-coral hover:underline mb-5"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>Further Read / Listen</span>
+                      </a>
+                    )}
 
                     <div className="pt-4 border-t border-stone-well flex items-center gap-3">
                       <button
@@ -535,65 +861,80 @@ export default function App() {
           <div className="w-full space-y-4">
             <div className="flex items-end justify-between border-b border-stone-border pb-3">
               <div>
-                <h2 className="font-serif text-3xl text-stone-ink">Popularity Pulse</h2>
-                <p className="text-xs text-stone-sub">Ranked by focus-group anticipation. Click status to update.</p>
+                <h2 className="text-2xl font-bold text-stone-ink">Popularity Pulse</h2>
+                <p className="text-xs text-stone-sub">
+                  {isOwner
+                    ? 'Ranked by focus-group anticipation. Click status to update.'
+                    : 'Ranked by focus-group anticipation.'}
+                </p>
               </div>
               <span className="text-xs font-mono-tab text-stone-muted">{ideas.length} total</span>
             </div>
 
-            <div className="space-y-3">
-              {sortedPulse.map((item, idx) => {
-                const total = item.cantWaitCount + item.passCount;
-                const pct = total > 0 ? Math.round((item.cantWaitCount / total) * 100) : 0;
+            {sortedPulse.length === 0 ? (
+              <div className="bg-paper rounded-2xl p-8 border border-stone-border text-center text-sm text-stone-sub">
+                No ideas in this Lab yet.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {sortedPulse.map((item, idx) => {
+                  const total = item.cantWaitCount + item.passCount;
+                  const pct = total > 0 ? Math.round((item.cantWaitCount / total) * 100) : 0;
 
-                return (
-                  <div
-                    key={item.id}
-                    className="bg-paper rounded-2xl p-5 border border-stone-border shadow-sm space-y-3"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs font-mono-tab font-bold text-coral">#{idx + 1}</span>
-                          <span className="text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-coral-tint text-coral">
-                            {item.type} · {item.format}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => cycleStatus(item.id)}
-                            className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border transition-colors ${
-                              item.status === 'shipped'
-                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                : item.status === 'building'
-                                ? 'bg-amber-50 text-amber-700 border-amber-200'
-                                : 'bg-stone-well text-stone-sub border-stone-border'
-                            }`}
-                            title="Click to cycle status"
-                          >
-                            {item.status === 'shipped' ? 'Shipped' : item.status === 'building' ? 'In Progress' : 'In Queue'}
-                          </button>
+                  return (
+                    <div
+                      key={item.id}
+                      className="bg-paper rounded-2xl p-5 border border-stone-border shadow-sm space-y-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-mono-tab font-bold text-coral">#{idx + 1}</span>
+                            <span className="text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-coral-tint text-coral">
+                              {item.no ? `Idea #${item.no}` : `${item.type} · ${item.format}`}
+                            </span>
+                            {!item.inPot && (
+                              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-stone-well text-stone-muted">
+                                Not in Pot
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              disabled={!isOwner}
+                              onClick={() => cycleStatus(item.id)}
+                              className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border transition-colors ${
+                                item.status === 'shipped'
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  : item.status === 'building'
+                                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                  : 'bg-stone-well text-stone-sub border-stone-border'
+                              } ${isOwner ? 'cursor-pointer' : 'cursor-default'}`}
+                            >
+                              {item.status === 'shipped' ? 'Shipped' : item.status === 'building' ? 'In Progress' : 'In Queue'}
+                            </button>
+                          </div>
+                          <h3 className="text-lg font-bold text-stone-ink leading-snug">{item.title}</h3>
                         </div>
-                        <h3 className="font-serif text-2xl text-stone-ink leading-snug">{item.title}</h3>
+
+                        <div className="text-right flex-shrink-0">
+                          <div className="text-lg font-mono-tab font-bold text-coral">{pct}%</div>
+                          <div className="text-[11px] font-mono-tab text-stone-muted">
+                            {item.cantWaitCount} / {total}
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="text-right flex-shrink-0">
-                        <div className="text-lg font-mono-tab font-bold text-coral">{pct}%</div>
-                        <div className="text-[11px] font-mono-tab text-stone-muted">
-                          {item.cantWaitCount} / {total}
-                        </div>
+                      <div className="w-full h-1.5 rounded-full bg-stone-well overflow-hidden">
+                        <div
+                          className="h-full bg-coral transition-all duration-300"
+                          style={{ width: `${pct}%` }}
+                        />
                       </div>
                     </div>
-
-                    <div className="w-full h-1.5 rounded-full bg-stone-well overflow-hidden">
-                      <div
-                        className="h-full bg-coral transition-all duration-300"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
       </main>
@@ -623,12 +964,250 @@ export default function App() {
         </button>
       </footer>
 
-      {/* Drop Idea Modal */}
+      {/* Lab Switcher Modal */}
+      {isSwitcherOpen && user && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-ink/40 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-paper rounded-3xl border border-stone-border shadow-2xl p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-stone-border pb-3">
+              <h3 className="text-lg font-bold text-stone-ink flex items-center gap-2">
+                <Users className="w-4 h-4 text-coral" />
+                <span>Your Focus Groups</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsSwitcherOpen(false)}
+                className="p-1.5 rounded-full hover:bg-stone-well text-stone-sub"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {labActionError && (
+              <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700">
+                {labActionError}
+              </div>
+            )}
+
+            <div className="space-y-2">
+              {labs.map((l) => (
+                <button
+                  key={l.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveLab(l);
+                    setIsSwitcherOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between p-3 rounded-2xl border text-left transition-all ${
+                    activeLab?.id === l.id
+                      ? 'bg-coral-tint/60 border-coral/40'
+                      : 'bg-cream border-stone-border hover:border-stone-muted'
+                  }`}
+                >
+                  <div>
+                    <div className="font-semibold text-sm text-stone-ink">{l.name}</div>
+                    <div className="text-[11px] text-stone-sub">
+                      {l.ownerId === user.uid ? 'Owned by you' : `by ${l.ownerName}`}
+                    </div>
+                  </div>
+                  <span className="text-xs font-mono-tab px-2.5 py-1 rounded-full bg-paper border border-stone-border text-stone-sub">
+                    {l.code}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {/* Create New Lab */}
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!newLabName.trim()) return;
+                const displayName = user.displayName || user.email?.split('@')[0] || 'Creator';
+                const created = await createLab(user.uid, displayName, newLabName.trim());
+                setLabs((prev) => [created, ...prev]);
+                setActiveLab(created);
+                setNewLabName('');
+                setIsSwitcherOpen(false);
+                showToast(`Created ${created.name}`);
+              }}
+              className="pt-3 border-t border-stone-border space-y-2"
+            >
+              <label className="block text-xs font-semibold text-stone-sub">Create a New Lab</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newLabName}
+                  onChange={(e) => setNewLabName(e.target.value)}
+                  placeholder="e.g. YouTube Content Lab"
+                  className="flex-1 px-3 py-2 rounded-xl bg-cream border border-stone-border text-sm focus:border-coral focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-stone-ink text-white text-xs font-bold active:scale-95"
+                >
+                  Create
+                </button>
+              </div>
+            </form>
+
+            {/* Join by Code */}
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setLabActionError(null);
+                try {
+                  const joined = await joinLabByCode(user.uid, joinCodeInput);
+                  setLabs((prev) => [joined, ...prev.filter((l) => l.id !== joined.id)]);
+                  setActiveLab(joined);
+                  setJoinCodeInput('');
+                  setIsSwitcherOpen(false);
+                  showToast(`Joined ${joined.name}`);
+                } catch (err: any) {
+                  setLabActionError(err?.message || 'Could not join Lab.');
+                }
+              }}
+              className="pt-3 border-t border-stone-border space-y-2"
+            >
+              <label className="block text-xs font-semibold text-stone-sub">Join a Creator&apos;s Lab</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={joinCodeInput}
+                  onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
+                  placeholder="Enter 6-char code"
+                  maxLength={6}
+                  className="flex-1 px-3 py-2 rounded-xl bg-cream border border-stone-border font-mono-tab uppercase text-sm focus:border-coral focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-coral text-white text-xs font-bold active:scale-95"
+                >
+                  Join
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Lab Settings, Daily Notifications & Google Sheet Sync Modal (Owner) */}
+      {isSettingsOpen && activeLab && isOwner && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-ink/40 backdrop-blur-sm">
+          <div className="w-full max-w-lg bg-paper rounded-3xl border border-stone-border shadow-2xl p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-stone-border pb-3">
+              <h3 className="text-lg font-bold text-stone-ink">Lab Settings &amp; Sync</h3>
+              <button
+                type="button"
+                onClick={() => setIsSettingsOpen(false)}
+                className="p-1.5 rounded-full hover:bg-stone-well text-stone-sub"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveSettings} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-stone-sub mb-1">Lab Name</label>
+                <input
+                  type="text"
+                  value={settingsName}
+                  onChange={(e) => setSettingsName(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-cream border border-stone-border text-sm focus:border-coral focus:outline-none"
+                />
+              </div>
+
+              {/* Daily Notification Schedule */}
+              <div className="p-4 rounded-2xl bg-cream border border-stone-border space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-stone-ink">Daily Check-In Reminder</div>
+                    <div className="text-xs text-stone-sub">Remind focus group members daily to swipe new ideas</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={scheduleEnabled}
+                    onChange={(e) => setScheduleEnabled(e.target.checked)}
+                    className="w-4 h-4 accent-[#16A34A]"
+                  />
+                </div>
+                {scheduleEnabled && (
+                  <div className="flex items-center gap-3">
+                    <label className="text-xs font-medium text-stone-sub">Daily Time:</label>
+                    <input
+                      type="time"
+                      value={scheduleTime}
+                      onChange={(e) => setScheduleTime(e.target.value)}
+                      className="px-2.5 py-1.5 rounded-lg bg-paper border border-stone-border text-xs font-mono-tab"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-2.5 rounded-xl bg-stone-ink text-white text-xs font-bold active:scale-95"
+              >
+                Save Lab Settings
+              </button>
+            </form>
+
+            {/* Google Sheet Sync Section */}
+            <div className="pt-4 border-t border-stone-border space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-bold text-stone-ink flex items-center gap-1.5">
+                  <FileSpreadsheet className="w-4 h-4 text-coral" />
+                  <span>Sync from Google Sheet</span>
+                </h4>
+                <button
+                  type="button"
+                  onClick={downloadBlankSheetTemplate}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-coral hover:underline"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Blank Template (.csv)</span>
+                </button>
+              </div>
+
+              <p className="text-xs text-stone-sub leading-relaxed">
+                Share a 5-column Google Sheet (<strong>no</strong>, <strong>One-liner Description</strong>,{' '}
+                <strong>Full Description</strong>, <strong>Further Read/Listen</strong>, <strong>Pot</strong>) with{' '}
+                <em>&ldquo;Anyone with the link&rdquo;</em> access.
+              </p>
+
+              {sheetError && (
+                <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700">
+                  {sheetError}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={sheetUrlInput}
+                  onChange={(e) => setSheetUrlInput(e.target.value)}
+                  placeholder="https://docs.google.com/spreadsheets/d/..."
+                  className="flex-1 px-3 py-2 rounded-xl bg-cream border border-stone-border text-xs focus:border-coral focus:outline-none"
+                />
+                <button
+                  type="button"
+                  disabled={isSyncingSheet || !sheetUrlInput.trim()}
+                  onClick={handleSyncSheet}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-coral hover:bg-coral-hover disabled:opacity-50 text-white text-xs font-bold active:scale-95"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingSheet ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingSheet ? 'Syncing...' : 'Sync'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Drop Idea Modal (Owner) */}
       {isComposeOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-ink/40 backdrop-blur-sm">
           <div className="w-full max-w-md bg-paper rounded-3xl border border-stone-border shadow-2xl p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-stone-border pb-3">
-              <h3 className="font-serif text-2xl text-stone-ink">Drop a New Idea</h3>
+              <h3 className="text-xl font-bold text-stone-ink">Drop a New Idea</h3>
               <button
                 type="button"
                 onClick={() => setIsComposeOpen(false)}
@@ -671,7 +1250,7 @@ export default function App() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-stone-sub mb-1">Title *</label>
+                <label className="block text-xs font-semibold text-stone-sub mb-1">One-liner Description *</label>
                 <input
                   type="text"
                   required
@@ -683,13 +1262,26 @@ export default function App() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-stone-sub mb-1">Hook / One-Liner *</label>
+                <label className="block text-xs font-semibold text-stone-sub mb-1">Full Description *</label>
                 <textarea
                   required
                   rows={3}
                   value={newHook}
                   onChange={(e) => setNewHook(e.target.value)}
                   placeholder="Why would your focus group be excited about this?"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-cream border border-stone-border text-sm focus:border-coral focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-sub mb-1">
+                  Further Read / Listen (Optional URL)
+                </label>
+                <input
+                  type="text"
+                  value={newFurtherRead}
+                  onChange={(e) => setNewFurtherRead(e.target.value)}
+                  placeholder="https://..."
                   className="w-full px-3.5 py-2.5 rounded-xl bg-cream border border-stone-border text-sm focus:border-coral focus:outline-none"
                 />
               </div>
@@ -702,142 +1294,6 @@ export default function App() {
                 <span>Post to Focus Group</span>
               </button>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* Sign In / Sign Up Modal (Google + Email & Code) */}
-      {isAuthOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-ink/40 backdrop-blur-sm">
-          <div className="w-full max-w-sm bg-paper rounded-3xl border border-stone-border shadow-2xl p-6 space-y-5">
-            <div className="flex items-center justify-between border-b border-stone-border pb-3">
-              <h3 className="text-xl font-bold text-stone-ink">Sign in to Can't Wait</h3>
-              <button
-                type="button"
-                onClick={() => setIsAuthOpen(false)}
-                className="p-1.5 rounded-full hover:bg-stone-well text-stone-sub"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {authError && (
-              <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700">
-                {authError}
-              </div>
-            )}
-
-            <button
-              type="button"
-              disabled={authLoading}
-              onClick={async () => {
-                setAuthLoading(true);
-                setAuthError(null);
-                try {
-                  await signInWithGoogle();
-                  setIsAuthOpen(false);
-                } catch (err: any) {
-                  setAuthError(err?.message || 'Google sign-in failed.');
-                } finally {
-                  setAuthLoading(false);
-                }
-              }}
-              className="w-full py-3 rounded-xl bg-stone-ink hover:bg-stone-ink/90 text-white font-semibold text-sm flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
-            >
-              <span>Continue with Google</span>
-            </button>
-
-            <div className="relative flex items-center justify-center">
-              <div className="border-t border-stone-border w-full" />
-              <span className="bg-paper px-3 text-[11px] uppercase tracking-wider text-stone-muted">or</span>
-              <div className="border-t border-stone-border w-full" />
-            </div>
-
-            {authStep === 'email' ? (
-              <form
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  setAuthLoading(true);
-                  setAuthError(null);
-                  try {
-                    const code = await requestEmailCode(authEmail);
-                    setSentCodePreview(code);
-                    setAuthStep('code');
-                  } catch (err: any) {
-                    setAuthError(err?.message || 'Could not send code.');
-                  } finally {
-                    setAuthLoading(false);
-                  }
-                }}
-                className="space-y-3"
-              >
-                <div>
-                  <label className="block text-xs font-semibold text-stone-sub mb-1">Email address</label>
-                  <div className="relative">
-                    <Mail className="w-4 h-4 text-stone-muted absolute left-3.5 top-3" />
-                    <input
-                      type="email"
-                      required
-                      value={authEmail}
-                      onChange={(e) => setAuthEmail(e.target.value)}
-                      placeholder="you@example.com"
-                      className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-cream border border-stone-border text-sm focus:border-coral focus:outline-none"
-                    />
-                  </div>
-                </div>
-                <button
-                  type="submit"
-                  disabled={authLoading}
-                  className="w-full py-2.5 rounded-xl bg-coral hover:bg-coral-hover text-white font-bold text-sm transition-all active:scale-95 disabled:opacity-50"
-                >
-                  Send 6-Digit Code
-                </button>
-              </form>
-            ) : (
-              <form
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  setAuthLoading(true);
-                  setAuthError(null);
-                  try {
-                    await verifyEmailCode(authEmail, authCode);
-                    setIsAuthOpen(false);
-                  } catch (err: any) {
-                    setAuthError(err?.message || 'Invalid code.');
-                  } finally {
-                    setAuthLoading(false);
-                  }
-                }}
-                className="space-y-3"
-              >
-                {sentCodePreview && (
-                  <div className="p-2.5 rounded-xl bg-coral-tint border border-coral/20 text-xs text-coral font-mono-tab text-center">
-                    Demo Code: <strong>{sentCodePreview}</strong>
-                  </div>
-                )}
-                <div>
-                  <label className="block text-xs font-semibold text-stone-sub mb-1">
-                    Enter 6-digit code sent to {authEmail}
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={6}
-                    value={authCode}
-                    onChange={(e) => setAuthCode(e.target.value)}
-                    placeholder="123456"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-cream border border-stone-border text-center font-mono-tab text-lg tracking-widest focus:border-coral focus:outline-none"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={authLoading}
-                  className="w-full py-2.5 rounded-xl bg-coral hover:bg-coral-hover text-white font-bold text-sm transition-all active:scale-95 disabled:opacity-50"
-                >
-                  Verify & Sign In
-                </button>
-              </form>
-            )}
           </div>
         </div>
       )}

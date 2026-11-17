@@ -1,4 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getFirestore, type Firestore } from 'firebase/firestore';
 import {
   getAuth,
   GoogleAuthProvider,
@@ -22,14 +23,18 @@ export const isFirebaseConfigured = Boolean(
 );
 
 let auth: Auth | null = null;
+let db: Firestore | null = null;
 if (isFirebaseConfigured) {
   try {
     const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
     auth = getAuth(app);
+    db = getFirestore(app);
   } catch (err) {
     console.warn('[CantWait Auth] Firebase init failed:', err);
   }
 }
+
+export { auth, db };
 
 export interface AuthUser {
   uid: string;
