@@ -103,7 +103,7 @@ export default function App() {
   const [dx, setDx] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [isExiting, setIsExiting] = useState<'cantwait' | 'pass' | null>(null);
-  const startXRef = useRef<number | null>(null);
+  const pendingSwipeRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -373,7 +373,7 @@ export default function App() {
   if (authReady && !user) {
     const invitedCode = parseInviteCodeFromUrl();
     return (
-      <div className="min-h-screen bg-cream text-stone-ink flex flex-col items-center justify-center p-4">
+      <div className="min-h-[100dvh] bg-cream text-stone-ink flex flex-col items-center justify-center p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
         <div className="w-full max-w-sm bg-paper rounded-3xl border border-stone-border shadow-[0_16px_40px_-10px_rgba(0,0,0,0.08)] p-7 space-y-6">
           <div className="text-center space-y-2">
             <div className="w-11 h-11 mx-auto rounded-2xl bg-coral text-white flex items-center justify-center font-extrabold text-lg shadow-sm">
@@ -509,7 +509,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-cream text-stone-ink flex flex-col justify-between p-4 sm:p-6">
+    <div className="min-h-[100dvh] bg-cream text-stone-ink flex flex-col justify-between p-4 sm:p-6 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
       {/* Toast */}
       {toast && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-stone-ink text-cream text-xs font-semibold shadow-lg">
@@ -707,30 +707,58 @@ export default function App() {
                   {/* Active Top Card */}
                   <div
                     onPointerDown={(e) => {
-                      e.currentTarget.setPointerCapture?.(e.pointerId);
-                      startXRef.current = e.clientX;
-                      setIsDragging(true);
+                      const target = e.target as HTMLElement | null;
+                      if (target?.closest('button, a, input, textarea')) return;
+                      pendingSwipeRef.current = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
                     }}
                     onPointerMove={(e) => {
-                      if (!isDragging || startXRef.current === null) return;
-                      setDx(e.clientX - startXRef.current);
-                    }}
-                    onPointerUp={() => {
-                      if (!isDragging) return;
-                      if (dx >= 100) {
-                        handleVote('cantwait');
-                      } else if (dx <= -100) {
-                        handleVote('pass');
-                      } else {
-                        setDx(0);
-                        setIsDragging(false);
+                      const pending = pendingSwipeRef.current;
+                      if (!pending || e.pointerId !== pending.pointerId) return;
+                      const deltaX = e.clientX - pending.x;
+                      const deltaY = e.clientY - pending.y;
+
+                      if (!isDragging) {
+                        // 8px horizontal drag hysteresis so vertical scroll & taps never hijack
+                        if (Math.abs(deltaX) >= 8 && Math.abs(deltaX) > Math.abs(deltaY)) {
+                          try {
+                            e.currentTarget.setPointerCapture?.(e.pointerId);
+                          } catch {
+                            // ignore
+                          }
+                          setIsDragging(true);
+                          setDx(deltaX);
+                        } else if (Math.abs(deltaY) >= 10 && Math.abs(deltaY) > Math.abs(deltaX)) {
+                          pendingSwipeRef.current = null;
+                        }
+                        return;
                       }
-                      startXRef.current = null;
+
+                      setDx(deltaX);
+                    }}
+                    onPointerUp={(e) => {
+                      if (isDragging) {
+                        try {
+                          if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+                            e.currentTarget.releasePointerCapture?.(e.pointerId);
+                          }
+                        } catch {
+                          // ignore
+                        }
+                        if (dx >= 100) {
+                          handleVote('cantwait');
+                        } else if (dx <= -100) {
+                          handleVote('pass');
+                        } else {
+                          setDx(0);
+                          setIsDragging(false);
+                        }
+                      }
+                      pendingSwipeRef.current = null;
                     }}
                     onPointerCancel={() => {
                       setDx(0);
                       setIsDragging(false);
-                      startXRef.current = null;
+                      pendingSwipeRef.current = null;
                     }}
                     className="relative w-full bg-paper rounded-3xl p-6 border border-stone-border shadow-[0_16px_40px_-10px_rgba(24,24,27,0.1)] select-none cursor-grab active:cursor-grabbing"
                     style={{
