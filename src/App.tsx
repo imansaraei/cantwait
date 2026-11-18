@@ -520,9 +520,9 @@ export default function App() {
 
   return (
     <div className="min-h-[100dvh] bg-cream text-stone-ink flex flex-col justify-between p-4 sm:p-6 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
-      {/* Toast */}
+      {/* Toast (pointer-events-none bottom-above-nav so it never occludes header buttons) */}
       {toast && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-stone-ink text-cream text-xs font-semibold shadow-lg">
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none px-4 py-2 rounded-full bg-stone-ink text-cream text-xs font-semibold shadow-lg whitespace-nowrap">
           {toast}
         </div>
       )}
@@ -604,9 +604,10 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setIsComposeOpen(true)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-stone-ink hover:bg-stone-ink/90 text-cream text-xs font-semibold transition-all active:scale-95 shadow-sm"
+                aria-label="Drop Idea"
+                className="inline-flex items-center gap-1 p-2 sm:px-3 sm:py-1.5 rounded-full bg-stone-ink hover:bg-stone-ink/90 text-cream text-xs font-semibold transition-all active:scale-95 shadow-sm"
               >
-                <Plus className="w-3.5 h-3.5" />
+                <Plus className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                 <span className="hidden sm:inline">Drop Idea</span>
               </button>
             </>
@@ -846,10 +847,10 @@ export default function App() {
                           e.stopPropagation();
                           handleVote('pass');
                         }}
-                        className="flex-1 inline-flex items-center justify-between px-4 py-3 rounded-xl border border-stone-border bg-cream hover:bg-stone-well text-stone-sub font-semibold text-sm transition-all active:scale-95"
+                        className="flex-1 inline-flex items-center justify-between px-3.5 sm:px-4 py-3 rounded-xl border border-stone-border bg-cream hover:bg-stone-well text-stone-sub font-semibold text-sm whitespace-nowrap transition-all active:scale-95"
                       >
                         <span className="inline-flex items-center gap-1.5">
-                          <X className="w-4 h-4" />
+                          <X className="w-4 h-4 flex-shrink-0" />
                           <span>Pass</span>
                         </span>
                         <kbd className="kbd-warm hidden sm:inline-flex">←</kbd>
@@ -861,10 +862,10 @@ export default function App() {
                           e.stopPropagation();
                           handleVote('cantwait');
                         }}
-                        className="flex-1 inline-flex items-center justify-between px-4 py-3 rounded-xl bg-coral hover:bg-coral-hover text-white font-bold text-sm transition-all active:scale-95 shadow-sm"
+                        className="flex-1 inline-flex items-center justify-between px-3.5 sm:px-4 py-3 rounded-xl bg-coral hover:bg-coral-hover text-white font-bold text-sm whitespace-nowrap transition-all active:scale-95 shadow-sm"
                       >
                         <span className="inline-flex items-center gap-1.5">
-                          <Flame className="w-4 h-4" />
+                          <Flame className="w-4 h-4 flex-shrink-0" />
                           <span>Can't Wait!</span>
                         </span>
                         <kbd className="kbd-warm hidden sm:inline-flex !bg-white/20 !text-white !border-white/30">→</kbd>
