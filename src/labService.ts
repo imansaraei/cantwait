@@ -13,7 +13,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './auth';
 import { Lab, IdeaItem, LabSchedule, IdeaStatus } from './types';
-import { fetchDocIdeas } from './docsParser';
+import { fetchSheetIdeas } from './sheets';
 
 const STORAGE_LABS = 'cantwait_labs_v2';
 const STORAGE_IDEAS_PREFIX = 'cantwait_lab_ideas_v2_';
@@ -238,7 +238,7 @@ export async function joinLabByCode(uid: string, rawCode: string): Promise<Lab> 
 
 export async function updateLabSettings(
   labId: string,
-  updates: Partial<Pick<Lab, 'name' | 'schedule' | 'googleDocId' | 'lastSyncedAt'>>
+  updates: Partial<Pick<Lab, 'name' | 'schedule' | 'googleSheetId' | 'lastSyncedAt'>>
 ): Promise<void> {
   if (db) {
     try {
@@ -312,12 +312,8 @@ export async function addIdeaToLab(
   return newIdea;
 }
 
-export async function syncDocToLab(
-  labId: string,
-  docUrlOrId: string,
-  directContent?: string
-): Promise<{ count: number; ideas: IdeaItem[]; docId: string }> {
-  const { docId, ideas: parsed } = await fetchDocIdeas(docUrlOrId, directContent);
+export async function syncSheetToLab(labId: string, sheetUrlOrId: string): Promise<{ count: number; ideas: IdeaItem[]; sheetId: string }> {
+  const { sheetId, ideas: parsed } = await fetchSheetIdeas(sheetUrlOrId);
   const existing = await getLabIdeas(labId);
   const byId = new Map(existing.map((i) => [i.id, i]));
   const byNo = new Map(existing.filter((i) => i.no).map((i) => [i.no!.toLowerCase(), i]));
@@ -335,10 +331,10 @@ export async function syncDocToLab(
       : incoming;
   });
 
-  // Retain manual ideas that weren't from the doc
+  // Retain manual ideas that weren't from the sheet
   const incomingIds = new Set(merged.map((i) => i.id));
   for (const prev of existing) {
-    if (!incomingIds.has(prev.id) && !prev.id.startsWith('doc_')) {
+    if (!incomingIds.has(prev.id) && !prev.id.startsWith('sheet_')) {
       merged.push(prev);
     }
   }
@@ -349,13 +345,13 @@ export async function syncDocToLab(
         await setDoc(doc(db, 'labs', labId, 'ideas', item.id), item, { merge: true });
       }
     } catch (err) {
-      console.warn('[LabService] Firestore syncDoc fallback:', err);
+      console.warn('[LabService] Firestore syncSheet fallback:', err);
     }
   }
 
   writeLocalIdeas(labId, merged);
-  await updateLabSettings(labId, { googleDocId: docId, lastSyncedAt: Date.now() });
-  return { count: parsed.length, ideas: merged, docId };
+  await updateLabSettings(labId, { googleSheetId: sheetId, lastSyncedAt: Date.now() });
+  return { count: parsed.length, ideas: merged, sheetId };
 }
 
 export async function recordLabVote(
