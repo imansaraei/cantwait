@@ -79,8 +79,12 @@ export function onAuthChange(cb: (user: AuthUser | null) => void): () => void {
           photoURL: fbUser.photoURL,
         };
         notifyLocal(mapped);
+      } else {
+        cb(localUser);
       }
     });
+  } else {
+    cb(localUser);
   }
 
   return () => {

@@ -369,8 +369,18 @@ export default function App() {
 
   const dragProgress = Math.min(1, Math.abs(dx) / 110);
 
-  // AUTH GATE: Sign-in required
-  if (authReady && !user) {
+  // AUTH GATE: Loading or Sign-in required
+  if (!authReady) {
+    return (
+      <div className="min-h-[100dvh] bg-cream text-stone-ink flex flex-col items-center justify-center p-4">
+        <div className="w-11 h-11 rounded-2xl bg-coral text-white flex items-center justify-center font-extrabold text-lg shadow-sm animate-pulse">
+          !
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
     const invitedCode = parseInviteCodeFromUrl();
     return (
       <div className="min-h-[100dvh] bg-cream text-stone-ink flex flex-col items-center justify-center p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
